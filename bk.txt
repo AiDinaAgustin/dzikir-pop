@@ -1,0 +1,125 @@
+<?php
+// File: dzikir_api.php
+
+// Koneksi ke database (ganti sesuai dengan konfigurasi database Anda)
+$host = 'localhost';
+$username = 'root';
+$password = '';
+$dbname = 'dzikirpop';
+
+$connection = mysqli_connect($host, $username, $password, $dbname);
+
+header("Content-Type: application/json");
+header("Access-Control-Allow-Origin: *");
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
+header("Access-Control-Allow-Headers: Content-Type");
+
+// Fungsi untuk mengirimkan dzikir dan mengupdate leaderboard
+function postDzikir($province) {
+    global $connection;
+
+    // Cek apakah sudah ada data timestamp terakhir dalam session
+    session_start();
+    $last_request_time = isset($_SESSION['last_request_time']) ? $_SESSION['last_request_time'] : null;
+    $dzikir_data = isset($_SESSION['dzikir_data']) ? $_SESSION['dzikir_data'] : array();
+    
+    // Cek jika sudah lewat 30 detik dari request sebelumnya
+    if ($last_request_time !== null && time() - $last_request_time < 30) {
+        // Tambahkan dzikir ke dalam sesi
+        if (!isset($dzikir_data[$province])) {
+            $dzikir_data[$province] = 1;
+        } else {
+            $dzikir_data[$province]++;
+        }
+        $_SESSION['dzikir_data'] = $dzikir_data;
+
+        // Berikan respon berhasil
+        http_response_code(200);
+        echo json_encode(array("message" => "Dzikir added to session."));
+    } else {
+        // Panggil fungsi untuk mengupdate leaderboard dari data dzikir dalam sesi
+        updateLeaderboardFromSession();
+
+        // Reset dzikir_data dan simpan dzikir terkini dalam sesi
+        $_SESSION['dzikir_data'] = array($province => 1);
+
+        // Berikan respon berhasil
+        http_response_code(200);
+        echo json_encode(array("message" => "Dzikir added to session and leaderboard updated."));
+    }
+
+    // Simpan waktu timestamp terakhir dalam session
+    $_SESSION['last_request_time'] = time();
+}
+
+
+function addDzikirToSession($province) {
+    if (!isset($_SESSION['dzikir_data'])) {
+        $_SESSION['dzikir_data'] = array();
+    }
+
+    if (!isset($_SESSION['dzikir_data'][$province])) {
+        $_SESSION['dzikir_data'][$province] = 0;
+    }
+
+    $_SESSION['dzikir_data'][$province]++;
+}
+
+function updateLeaderboardFromSession() {
+    if (isset($_SESSION['dzikir_data']) && is_array($_SESSION['dzikir_data'])) {
+        global $connection;
+
+        foreach ($_SESSION['dzikir_data'] as $province => $count) {
+            // Cek apakah data provinsi sudah ada di leaderboard
+            $query = "SELECT * FROM leaderboard WHERE province = '$province'";
+            $result = mysqli_query($connection, $query);
+
+            if (mysqli_num_rows($result) > 0) {
+                // Jika provinsi sudah ada, update count dan updated_at
+                $query = "UPDATE leaderboard SET count = count + $count, updated_at = NOW() WHERE province = '$province'";
+                mysqli_query($connection, $query);
+            } else {
+                // Jika provinsi belum ada, tambahkan data baru ke leaderboard
+                $query = "INSERT INTO leaderboard (province, count) VALUES ('$province', $count)";
+                mysqli_query($connection, $query);
+            }
+        }
+    }
+}
+
+
+
+// Endpoint untuk menerima POST dzikir
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Periksa data yang dikirim
+    $province = isset($_POST['province']) ? $_POST['province'] : '';
+    if (!empty($province)) {
+        // Panggil fungsi untuk memproses dzikir
+        postDzikir($province);
+    } else {
+        http_response_code(400); // Bad Request
+        echo json_encode(array("message" => "Province field is required."));
+    }
+}
+
+// Endpoint untuk mengambil leaderboard
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+
+    if(isset($_GET["id"])){
+        $id = $_GET["id"];
+        $sql = "SELECT * FROM leaderboard WHERE id = $id";
+    }
+    else{
+        $sql = "SELECT * FROM leaderboard ORDER BY count DESC";
+    }
+
+    $result = $connection->query($sql);
+
+    $data = array();
+
+    while ($row = $result->fetch_assoc()) {
+        $data[] = $row;
+    }
+
+    echo json_encode($data);
+}
